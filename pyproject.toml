@@ -5,6 +5,7 @@ description = "Collèges et risques dans le Loiret : quels collèges publics dia
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.163.1",
+    "httpx>=0.28",
     "mcp>=1.30,<2",
     "openai>=3.52.0",
     "pandas>=3.1.1",

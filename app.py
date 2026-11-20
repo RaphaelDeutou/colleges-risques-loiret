@@ -596,7 +596,13 @@ def reglages_llm() -> dict[str, str]:
 def poser(question: str, cfg: dict[str, str]) -> None:
     """Ajoute la question, interroge le LLM (qui appelle les outils MCP), garde la réponse."""
     st.session_state.messages.append({"role": "user", "content": question})
-    conversation = [{"role": m["role"], "content": m["content"]} for m in st.session_state.messages]
+    # Les messages d'erreur ne repartent pas au LLM : ils gaspilleraient le quota de tokens.
+    conversation = [
+        {"role": m["role"], "content": m["content"]}
+        for m in st.session_state.messages
+        if not m.get("erreur")
+    ]
+    erreur_affichee = False
     try:
         texte, appels = chatbot.repondre(
             conversation,
@@ -605,15 +611,13 @@ def poser(question: str, cfg: dict[str, str]) -> None:
             cfg["LLM_MODEL"],
             cfg.get("API_URL") or "http://127.0.0.1:8000",
         )
-    except Exception as erreur:  # LLM indisponible, quota atteint, API endormie…
-        texte, appels = (
-            "Je n'ai pas pu répondre : le service du LLM ou l'API n'a pas répondu. "
-            "Réessayez dans une minute (l'API hébergée sur Render met environ une minute à se "
-            "réveiller).",
-            [],
-        )
-        st.session_state.derniere_erreur = f"{type(erreur).__name__} : {erreur}"
-    st.session_state.messages.append({"role": "assistant", "content": texte, "appels": appels})
+    except Exception as erreur:  # quota Groq, LLM indisponible, API endormie…
+        texte, appels, erreur_affichee = chatbot.message_erreur(erreur), [], True
+        vraie = chatbot.cause(erreur)
+        st.session_state.derniere_erreur = f"{type(vraie).__name__} : {vraie}"
+    st.session_state.messages.append(
+        {"role": "assistant", "content": texte, "appels": appels, "erreur": erreur_affichee}
+    )
 
 
 st.markdown(

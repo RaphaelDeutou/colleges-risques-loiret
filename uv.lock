@@ -315,6 +315,7 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "mcp" },
     { name = "openai" },
     { name = "pandas" },
@@ -336,6 +337,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "fastapi", specifier = ">=0.163.1" },
+    { name = "httpx", specifier = ">=0.28" },
     { name = "mcp", specifier = ">=1.30,<2" },
     { name = "openai", specifier = ">=3.52.0" },
     { name = "pandas", specifier = ">=3.1.1" },

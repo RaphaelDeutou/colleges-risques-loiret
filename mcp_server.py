@@ -21,13 +21,15 @@ API = os.environ.get("API_URL", "http://127.0.0.1:8000").rstrip("/")
 mcp = FastMCP("colleges-risques-loiret", log_level="WARNING")
 
 Famille = Literal["sol", "inondation", "techno", "pollution"]
+# Les paramètres numériques acceptent null : certains LLM envoient « horizon: null » au lieu
+# d'omettre l'argument, et Groq refuse alors l'appel (erreur 400). null = valeur par défaut.
 Horizon = Annotated[
-    int,
+    int | None,
     Field(
         ge=1,
         le=5,
         description="Nombre d'années après la rentrée 2025 : 2026 → 1, 2027 → 2, 2028 → 3, "
-        "2029 → 4, 2030 → 5.",
+        "2029 → 4, 2030 → 5. Par défaut : 3 (2028).",
     ),
 ]
 
@@ -50,7 +52,7 @@ def appeler_api(chemin: str, **params: Any) -> Any:
 def indicateurs_risques(
     commune: str | None = None,
     familles: list[Famille] | None = None,
-    horizon: Horizon = 3,
+    horizon: Horizon = None,
 ) -> dict[str, Any]:
     """Chiffres clés des collèges publics du Loiret exposés aux risques.
 
@@ -68,10 +70,10 @@ def indicateurs_risques(
 @mcp.tool()
 def classement_colleges(
     commune: str | None = None,
-    min_risques: Annotated[int, Field(ge=0, le=4)] = 1,
-    limit: Annotated[int, Field(ge=1, le=58)] = 10,
+    min_risques: Annotated[int | None, Field(ge=0, le=4, description="Défaut : 1.")] = None,
+    limit: Annotated[int | None, Field(ge=1, le=58, description="Défaut : 5.")] = None,
     familles: list[Famille] | None = None,
-    horizon: Horizon = 3,
+    horizon: Horizon = None,
 ) -> list[dict[str, Any]]:
     """Classement des collèges publics à diagnostiquer en priorité.
 
@@ -83,8 +85,8 @@ def classement_colleges(
     return appeler_api(
         "/colleges",
         commune=commune,
-        min_risques=min_risques,
-        limit=limit,
+        min_risques=1 if min_risques is None else min_risques,
+        limit=limit or 5,
         familles=familles,
         horizon=horizon,
     )
@@ -101,7 +103,7 @@ def chercher_college(texte: Annotated[str, Field(min_length=2)]) -> list[dict[st
 
 
 @mcp.tool()
-def fiche_college(uai: str, horizon: Horizon = 3) -> dict[str, Any]:
+def fiche_college(uai: str, horizon: Horizon = None) -> dict[str, Any]:
     """Fiche détaillée d'un collège, à partir de son identifiant uai (voir chercher_college).
 
     Renvoie : rang, élèves, familles de risque (vrai/faux), l'explication chiffrée de chaque

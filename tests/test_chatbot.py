@@ -56,7 +56,7 @@ class FauxLLM:
                     "name": "chercher_college", "arguments": '{"texte": "jargeau"}'}},
             )  # fmt: skip
             return message(appels=[appel])
-        resultat = json.loads(messages[-1]["content"])
+        resultat = json.loads(messages[-1]["content"])[0]  # une liste de collèges trouvés
         return message(texte=f"<think>…</think>Le collège de Jargeau est {resultat['nom']}.")
 
 
@@ -90,3 +90,29 @@ def test_l_api_valide_ses_parametres():
     assert client.get("/colleges/INCONNU").status_code == 404
     premier = client.get("/colleges", params={"limit": 1}).json()[0]
     assert premier["rang"] == 1 and premier["nb_familles"] >= 1
+
+
+def test_un_quota_groq_depasse_donne_un_message_clair():
+    import httpx
+    from openai import RateLimitError
+
+    reponse = httpx.Response(429, request=httpx.Request("POST", "https://api.groq.com"))
+    enveloppe = ExceptionGroup("TaskGroup", [RateLimitError("429", response=reponse, body=None)])
+    assert isinstance(chatbot.cause(enveloppe), RateLimitError)
+    assert "quota" in chatbot.message_erreur(enveloppe)
+
+
+def test_l_historique_envoye_au_llm_reste_court():
+    conversation = [{"role": "user", "content": f"q{i}"} for i in range(10)]
+    conversation[5] = {"role": "assistant", "content": "x" * 5000}
+    court = chatbot.historique_court(conversation)
+    assert court[-1]["content"] == "q9"  # la question est toujours envoyée
+    assert len(court) == chatbot.ECHANGES_GARDES + 1
+    assert all(len(m["content"]) <= chatbot.TAILLE_MAX_ANCIENNE_REPONSE for m in court[:-1])
+
+
+def test_un_parametre_null_prend_la_valeur_par_defaut(api_url):
+    erreur, texte = chatbot.appeler_outil(
+        api_url, "classement_colleges", {"horizon": None, "limit": None, "min_risques": None}
+    )
+    assert not erreur and len(json.loads(texte)) == 5  # 5 collèges par défaut, JSON compact

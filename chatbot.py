@@ -19,27 +19,41 @@ import re
 import sys
 from pathlib import Path
 
+import httpx
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-from openai import OpenAI
+from openai import APIStatusError, APITimeoutError, OpenAI, RateLimitError
 
 SERVEUR_MCP = Path(__file__).with_name("mcp_server.py")
 MAX_TOURS = 6  # au plus 6 allers-retours LLM ↔ outils par question
-TAILLE_MAX_RESULTAT = 12_000  # caractères d'un résultat d'outil renvoyés au LLM
+TAILLE_MAX_RESULTAT = 8_000  # caractères d'un résultat d'outil renvoyés au LLM
+# L'offre gratuite de Groq limite à 8 000 tokens par minute : on n'envoie que les derniers
+# échanges, et les anciennes réponses raccourcies.
+ECHANGES_GARDES = 4  # messages (questions et réponses) envoyés en plus de la question
+TAILLE_MAX_ANCIENNE_REPONSE = 600
 
 CONSIGNE = """Tu es l'assistant de la direction des collèges du Département du Loiret.
 Tu aides à choisir les collèges publics à diagnostiquer en priorité face aux risques.
 
 Règles :
 - Réponds en français, en quelques phrases ou une courte liste.
-- N'utilise QUE les chiffres renvoyés par les outils. N'invente rien. Si un outil échoue ou
-  ne renvoie rien, dis-le simplement.
+- N'utilise QUE les chiffres renvoyés par les outils, recopiés à l'identique. Ne fais aucun
+  calcul (pas de soustraction, pas de total) : si un chiffre n'est pas renvoyé, dis que tu ne
+  l'as pas. N'invente rien. Si un outil échoue ou ne renvoie rien, dis-le simplement.
 - Pour un collège cité par son nom, appelle d'abord chercher_college pour obtenir son uai,
   puis fiche_college.
 - Cite toujours le nom du collège et sa commune.
 - Rappelle si utile qu'un aléa n'est pas un risque avéré, qu'un ancien site industriel n'est
   pas une pollution prouvée, et que la prévision d'effectifs a une marge d'erreur.
-- Familles de risque : sol, inondation, techno (technologique), pollution (sols pollués).
+- Les familles de risque ont des définitions précises. N'en donne pas d'autres :
+  · sol : argiles fortes au point du collège, ou cavité, ou mouvement de terrain à < 500 m ;
+  · inondation : dans un périmètre de PPRI, ou remontée de nappe « risque existant » ;
+  · techno (technologique) : zone de 500 m d'un axe de transport de matières dangereuses
+    (TMD), ou site Seveso à moins de 2 km ;
+  · pollution (sols pollués) : au moins 5 anciens sites industriels (CASIAS) à < 500 m.
+  Ces définitions disent ce qui SUFFIT à classer un collège, pas ce qu'il a. Pour expliquer
+  le cas d'un collège, reprends le texte du champ « pourquoi » de fiche_college, seulement
+  pour les familles où il est exposé (par exemple « aléa moyen, 9 cavités à moins de 500 m »).
 - Les effectifs sont ceux de la rentrée 2025. Pour une année future, horizon = année - 2025
   (2028 → 3) et utilise les champs « prévus » (effectif_prevu, eleves_cumul_prevu) ; précise
   alors que c'est une prévision."""
@@ -62,8 +76,51 @@ def outils_au_format_openai(outils) -> list[dict]:
 
 def texte_resultat(resultat) -> str:
     """Le contenu texte d'un résultat d'outil MCP, tronqué pour ne pas saturer le LLM."""
-    texte = "\n".join(c.text for c in resultat.content if getattr(c, "text", None))
+    structure = getattr(resultat, "structuredContent", None)
+    if structure is not None and not resultat.isError:
+        # Le résultat structuré (un dict, ou {"result": [...]} pour une liste), en JSON
+        # compact : sans indentation, environ deux fois moins de tokens envoyés au LLM.
+        if set(structure) == {"result"}:
+            structure = structure["result"]
+        texte = json.dumps(structure, ensure_ascii=False, separators=(",", ":"))
+    else:  # un message d'erreur
+        texte = "\n".join(c.text for c in resultat.content if getattr(c, "text", None))
     return texte[:TAILLE_MAX_RESULTAT]
+
+
+def historique_court(conversation: list[dict]) -> list[dict]:
+    """La question, et seulement les derniers échanges, les anciennes réponses raccourcies."""
+    *avant, question = conversation
+    gardes = [
+        {**m, "content": m["content"][:TAILLE_MAX_ANCIENNE_REPONSE]}
+        for m in avant[-ECHANGES_GARDES:]
+    ]
+    return [*gardes, question]
+
+
+def cause(erreur: BaseException) -> BaseException:
+    """L'erreur réelle, sortie des ExceptionGroup que produisent asyncio et MCP."""
+    while isinstance(erreur, BaseExceptionGroup) and erreur.exceptions:
+        erreur = erreur.exceptions[0]
+    return erreur
+
+
+def message_erreur(erreur: BaseException) -> str:
+    """Un message lisible pour l'utilisateur, selon la vraie cause de l'erreur."""
+    e = cause(erreur)
+    if isinstance(e, RateLimitError):
+        return (
+            "Le quota gratuit de Groq est atteint (8 000 tokens par minute). "
+            "Attendez une minute avant la prochaine question."
+        )
+    if isinstance(e, APITimeoutError):
+        return "Le LLM n'a pas répondu à temps. Réessayez dans un instant."
+    if isinstance(e, APIStatusError):
+        return f"Le service du LLM a refusé la demande (erreur {e.status_code}). Réessayez."
+    return (
+        "Je n'ai pas pu répondre : l'API n'a pas répondu. Hébergée sur Render, elle met "
+        "environ une minute à se réveiller : réessayez dans une minute."
+    )
 
 
 def nettoyer(texte: str | None) -> str:
@@ -90,7 +147,7 @@ async def _repondre(
     ):
         await session.initialize()
         outils = outils_au_format_openai((await session.list_tools()).tools)
-        messages = [{"role": "system", "content": CONSIGNE}, *conversation]
+        messages = [{"role": "system", "content": CONSIGNE}, *historique_court(conversation)]
         for _ in range(MAX_TOURS):
             reponse = llm.chat.completions.create(
                 model=modele, messages=messages, tools=outils, temperature=0
@@ -125,7 +182,10 @@ def repondre(
     conversation: list[dict], url: str, cle: str, modele: str, api_url: str
 ) -> tuple[str, list[dict]]:
     """Répond à la dernière question de `conversation` ; renvoie le texte et les outils appelés."""
-    llm = OpenAI(base_url=url, api_key=cle)
+    # Connexion forcée en IPv4 : sur un réseau où l'IPv6 marche mal, httpx attendait plus de
+    # 40 s avant de basculer (mesuré en local) ; en IPv4, la connexion à Groq prend 0,4 s.
+    http = httpx.Client(transport=httpx.HTTPTransport(local_address="0.0.0.0"), timeout=60)
+    llm = OpenAI(base_url=url, api_key=cle, http_client=http, max_retries=1)
     return asyncio.run(_repondre(conversation, llm, modele, api_url))
 
 
