@@ -4,7 +4,7 @@
 
 **Utilisateurs** : la direction du Département chargée des collèges, et les élus qui votent les crédits de travaux.
 
-**Appli en ligne** : _à compléter après le déploiement_
+**Appli en ligne** : https://colleges-risques-loiret.streamlit.app/
 
 ## Lancer en local
 
