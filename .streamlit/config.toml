@@ -1,0 +1,17 @@
+[theme]
+base = "dark"
+primaryColor = "#818cf8"
+backgroundColor = "#05060a"
+secondaryBackgroundColor = "#0f121c"
+textColor = "#eef1f7"
+font = "Inter Tight:https://fonts.googleapis.com/css2?family=Inter+Tight:wght@300;400;500;600;700&display=swap"
+codeFont = "JetBrains Mono:https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap"
+borderColor = "#1d2130"
+baseRadius = "14px"
+
+[theme.sidebar]
+backgroundColor = "#080a11"
+secondaryBackgroundColor = "#11141f"
+
+[client]
+toolbarMode = "minimal"
