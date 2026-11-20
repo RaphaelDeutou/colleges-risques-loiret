@@ -53,16 +53,17 @@ Nous avons aussi regardé ce qui ne départage pas, et l'avons écarté : le **r
 | Environnement | **uv** (`pyproject.toml`, `uv.lock`) | installation reproductible, la même en local et en ligne |
 | Données | **pandas** + **Parquet** (pyarrow) | Parquet est léger (moins de 1 Mo ici) et garde les types ; la préparation tourne une fois dans `preparer.py` |
 | Enrichissement | **API Géorisques** (`georisques.py`, bibliothèque standard `urllib`) | appelée une seule fois, résultat mis en cache dans `data/georisques_colleges.parquet` : l'appli ne dépend pas d'internet |
+| Machine learning | **scikit-learn** (`prevision.py`) | régression Ridge, une par horizon de 1 à 5 ans, évaluée contre une méthode naïve |
 | Appli web | **Streamlit** | une seule page en Python, déploiement gratuit, clic sur un graphique avec `on_select` pour le drill-down |
 | Graphiques | **Plotly Express** | carte interactive (fond CARTO sombre), barres cliquables, survols |
 | Design | CSS dans `theme.py` + `.streamlit/config.toml` | thème sombre repris de mon portfolio |
-| Qualité | **ruff** (style), **pytest** (10 tests) | grille : « ruff propre, un test » |
+| Qualité | **ruff** (style), **pytest** (12 tests) | grille : « ruff propre, un test » |
 | Hébergement | **GitHub** + **Streamlit Community Cloud** | chaque `git push` redéploie l'appli |
 | Assistant | Claude Code | exploration du catalogue, cadrage, code (dit dans le README) |
 
 **Pourquoi Streamlit plutôt que Dash, en deux phrases :** Streamlit relance le script à chaque interaction, ce qui suffit pour 58 collèges et garde le code court et lisible pour tout le groupe. Son clic sur graphique (`on_select`) donne le drill-down sans écrire de callbacks.
 
-**Séparation calculs / affichage** (grille, qualité du code) : `risques.py` calcule, `theme.py` habille, `app.py` affiche, `preparer.py` et `georisques.py` préparent.
+**Séparation calculs / affichage** (grille, qualité du code) : `risques.py` calcule, `theme.py` habille, `app.py` affiche, `preparer.py`, `georisques.py` et `prevision.py` préparent.
 
 ## 4. Nos règles de classement
 
@@ -166,7 +167,25 @@ Les autres : Montabuzard (Ingré), La Forêt (Traînou), Aristide Bruant (Courte
 
 C'est un levier peu coûteux : demander à ces mairies de publier leur DICRIM.
 
-## 7. Limites à dire avant qu'on vous les demande
+## 7. La couche ML : prévoir les effectifs
+
+**Ce que ça apporte à la décision** : des travaux votés aujourd'hui sont livrés dans 2 ou 3 ans. Ce qui compte, ce sont les élèves qui *seront* dans le collège exposé. L'appli affiche la prévision dans l'indicateur « Élèves concernés », dans la fiche collège (en pointillé sur le graphique des effectifs), et peut s'en servir pour départager le classement.
+
+**Le modèle** : une régression **Ridge** par horizon, de 1 à 5 ans. Un exemple, c'est un collège à une rentrée ; la cible, la variation de son effectif quelques années plus tard. Les variables sont les parts de 6e, 5e et 4e (une grosse promotion de 6e reste 3 ans encore), l'IPS et la taille du collège. Ridge est un modèle linéaire régularisé : il convient à un petit jeu de données.
+
+**L'évaluation** : on cache la rentrée 2025, on la prédit avec un modèle qui ne l'a jamais vue, et on mesure l'erreur absolue moyenne (MAE) en élèves. On la compare à la méthode naïve « l'effectif ne bouge pas ».
+
+| Horizon | Modèle | « Ne bouge pas » | Exemples |
+|---|---|---|---|
+| 1 an | 14,5 | 15,8 | 286 |
+| 2 ans | 21,1 | 21,6 | 228 |
+| 3 ans | 26,5 | 27,4 | 170 |
+| 4 ans | 34,3 | 32,4 | 112 |
+| 5 ans | 43,8 | 41,9 | 56 |
+
+**Ce qu'il faut en dire honnêtement** : le modèle fait un peu mieux que la méthode naïve jusqu'à 3 ans, mais l'écart est faible. Au-delà, il n'a que 1 ou 2 années d'exemples et fait moins bien : l'appli le signale. Avec 7 rentrées connues et sans les effectifs de CM2 des écoles voisines, une prévision d'effectifs reste un ordre de grandeur. Elle sert à repérer les collèges qui vont grandir, pas à dimensionner une classe.
+
+## 8. Limites à dire avant qu'on vous les demande
 
 - L'exposition est mesurée **en un point** (l'adresse géocodée du collège), pas sur l'emprise du bâtiment.
 - « Non cartographié » pour les argiles peut vouloir dire une couche incomplète, et les deux cartes des argiles ne classent pas pareil.

@@ -18,15 +18,19 @@ from risques import (
     FAMILLES,
     FAMILLES_COURT,
     FICHIER_CATNAT,
+    FICHIER_ERREURS,
     FICHIER_HISTORIQUE,
+    FICHIER_PREVISIONS,
     FICHIER_PRIORITE,
     ORLEANS,
     SEUIL_CASIAS,
     SEUIL_SEVESO_KM,
     ajouter_familles,
+    ajouter_prevision,
     catnat_commune,
     charger_catnat,
     charger_historique,
+    charger_previsions,
     charger_priorite,
     classer,
     compter_familles,
@@ -47,12 +51,17 @@ RAYON_ORLEANS_KM = 15
 def donnees(version: tuple[float, ...]):
     """Les trois Parquet préparés. `version` (dates de modification des fichiers) fait partie
     de la clé du cache : après un git push qui change les données, le cache se renouvelle."""
-    return charger_priorite(), charger_historique(), charger_catnat()
+    return charger_priorite(), charger_historique(), charger_catnat(), *charger_previsions()
 
 
 def fr(n: float) -> str:
     """Nombre à la française ; l'espace fine insécable empêche « 8 941 » de se couper."""
     return f"{n:,.0f}".replace(",", " ")
+
+
+def dec(x: float) -> str:
+    """Un nombre à une décimale, avec la virgule française : 26,5."""
+    return f"{x:.1f}".replace(".", ",")
 
 
 def niveau(n: int) -> str:
@@ -75,8 +84,15 @@ def point_clique(cle: str) -> str | None:
     return uai if uai and uai != precedent else None
 
 
-colleges, historique, catnat = donnees(
-    tuple(f.stat().st_mtime for f in (FICHIER_PRIORITE, FICHIER_HISTORIQUE, FICHIER_CATNAT))
+FICHIERS = (
+    FICHIER_PRIORITE,
+    FICHIER_HISTORIQUE,
+    FICHIER_CATNAT,
+    FICHIER_PREVISIONS,
+    FICHIER_ERREURS,
+)
+colleges, historique, catnat, previsions, erreurs = donnees(
+    tuple(f.stat().st_mtime for f in FICHIERS)
 )
 
 # ---------------------------------------------------------------- filtres
@@ -125,6 +141,26 @@ with st.sidebar:
         help="Par défaut 5 : le quart des collèges les plus entourés. À 1, 40 collèges sur 58 "
         "seraient comptés.",
     )
+    st.markdown("### Prévision (ML)")
+    horizon = st.select_slider(
+        "Effectifs prévus dans",
+        options=list(range(1, 6)),
+        value=3,
+        format_func=lambda h: f"{h} an{'s' if h > 1 else ''} ({2025 + h})",
+        help="Un modèle par horizon, entraîné sur les rentrées 2019-2025. Plus l'horizon est "
+        "loin, moins il a d'exemples : son erreur est affichée dans la fiche collège.",
+    )
+    eleves_classement = (
+        st.segmented_control(
+            "Départager les collèges avec les élèves",
+            options=["effectif_total", "effectif_prevu"],
+            default="effectif_total",
+            format_func={"effectif_total": "de 2025", "effectif_prevu": "prévus"}.get,
+            help="À nombre de risques égal, le collège qui a (ou aura) le plus "
+            "d'élèves passe devant.",
+        )
+        or "effectif_total"
+    )
     st.markdown("### Règles")
     st.markdown(
         '<div class="note"><b>Sol</b> : argiles fortes selon la carte choisie, ou cavité, ou '
@@ -149,9 +185,11 @@ if seulement_hausse:
 if vue.empty:
     st.warning("Aucun collège ne correspond à ces filtres.")
     st.stop()
-vue = classer(vue)
+vue = classer(ajouter_prevision(vue, previsions, horizon), eleves_classement)
 vue["niveau"] = vue["nb_familles"].map(niveau)
 k = indicateurs(vue)
+annee_prevue = 2025 + horizon
+err = erreurs.set_index("horizon").loc[horizon]
 perimetre = f"rentrée 2025 · {k['colleges']} collège{'s' if k['colleges'] > 1 else ''} public"
 perimetre += "s" if k["colleges"] > 1 else ""
 if communes:
@@ -202,7 +240,8 @@ st.markdown(
       <div class="sub">sur {k["colleges"]} collèges publics</div></div>
     <div class="kpi"><div class="lab">Élèves concernés</div>
       <div class="val">{fr(k["eleves_cumul"])}</div>
-      <div class="sub">dans ces collèges, rentrée 2025</div></div>
+      <div class="sub">rentrée 2025 · environ {fr(k["eleves_cumul_prevu"] or 0)}
+        prévus en {annee_prevue}</div></div>
     <div class="kpi"><div class="lab">Exposés à 1 risque ou +</div>
       <div class="val">{k["colleges_expose"]}<span class="sur"> / {k["colleges"]}</span></div>
       <div class="sub">{fr(k["eleves_expose"])} élèves</div></div>
@@ -319,7 +358,7 @@ def afficher_classement() -> None:
             )
             barres = px.bar(
                 top,
-                x="effectif_total",
+                x=eleves_classement,  # la longueur suit les élèves qui départagent
                 y="nom",
                 color="niveau",
                 orientation="h",
@@ -327,8 +366,18 @@ def afficher_classement() -> None:
                 custom_data=["uai"],
                 color_discrete_map=theme.NIVEAUX,
                 category_orders={"nom": top["nom"].tolist(), "niveau": list(theme.NIVEAUX)},
-                labels={"effectif_total": "Élèves", "nom": "", "niveau": ""},
-                hover_data={"commune": True, "diagnostics": True, "familles_exposees": False},
+                labels={
+                    "effectif_total": "Élèves",
+                    "nom": "",
+                    "niveau": "",
+                    "effectif_prevu": f"Élèves prévus en {annee_prevue}",
+                },
+                hover_data={
+                    "commune": True,
+                    "diagnostics": True,
+                    "effectif_prevu": True,
+                    "familles_exposees": False,
+                },
             )
             # Le collège choisi garde sa couleur pleine ; les autres sont atténués.
             for trace in barres.data:
@@ -339,7 +388,7 @@ def afficher_classement() -> None:
             barres.update_traces(
                 textposition="outside", textfont={"color": theme.MU, "size": 12}, cliponaxis=False
             )
-            barres.update_xaxes(range=[0, top["effectif_total"].max() * 1.75], title=None)
+            barres.update_xaxes(range=[0, top[eleves_classement].max() * 1.75], title=None)
             barres.update_yaxes(tickfont={"color": theme.TX})
             theme.styliser(barres, 470)
             barres.update_layout(
@@ -442,12 +491,15 @@ with st.container(key="verre_fiche"):
         if h.empty:
             st.caption("Pas d'historique d'effectifs.")
         else:
-            premier, dernier = h.iloc[0], h.iloc[-1]
-            var = dernier["effectif_total"] / premier["effectif_total"] - 1
+            dernier = h.iloc[-1]
+            prevu = int(c["effectif_prevu"])
+            ecart = prevu / dernier["effectif_total"] - 1
+            marge = round(err["mae_modele"])
             st.markdown(
-                f'<div class="titre-graph">{var:+.0%} d\'élèves entre {int(premier["rentree"])} '
-                f"et {int(dernier['rentree'])}</div>"
-                f'<div class="aide">{len(h)} rentrées · effectif total</div>',
+                f'<div class="titre-graph">Environ {fr(prevu)} élèves prévus en {annee_prevue} '
+                f"({ecart:+.0%} par rapport à {int(dernier['rentree'])})</div>"
+                f'<div class="aide">{len(h)} rentrées connues · en pointillé : prévision du '
+                f"modèle, ± {marge} élèves d'erreur moyenne</div>",
                 unsafe_allow_html=True,
             )
             eff = px.area(h, x="rentree", y="effectif_total", markers=True)
@@ -457,10 +509,44 @@ with st.container(key="verre_fiche"):
                 marker={"size": 6, "color": theme.A1},
                 hovertemplate="Rentrée %{x} : %{y} élèves<extra></extra>",
             )
+            # La prévision : un trait pointillé depuis la dernière rentrée, et la marge d'erreur.
+            eff.add_trace(
+                go.Scatter(
+                    x=[dernier["rentree"], annee_prevue],
+                    y=[dernier["effectif_total"], prevu],
+                    mode="lines+markers",
+                    line={"color": theme.A3, "width": 2, "dash": "dot"},
+                    marker={"size": [0, 9], "color": theme.A3},
+                    error_y={
+                        "type": "data",
+                        "array": [0, marge],
+                        "color": theme.A3,
+                        "thickness": 1.5,
+                    },
+                    hovertemplate=f"Prévision {annee_prevue} : %{{y}} élèves (± {marge})"
+                    "<extra></extra>",
+                    showlegend=False,
+                )
+            )
             theme.styliser(eff, 250)
             eff.update_xaxes(title=None, dtick=1, tickformat="d")
             eff.update_yaxes(title=None, rangemode="tozero")
             st.plotly_chart(eff, width="stretch", config={"displayModeBar": False})
+            bat = err["mae_modele"] < err["mae_naif"]
+            st.markdown(
+                f'<div class="note">Fiabilité à {horizon} an{"s" if horizon > 1 else ""} : le '
+                f"modèle se trompe de {dec(err['mae_modele'])} élèves en moyenne, contre "
+                f"{dec(err['mae_naif'])} pour « l'effectif ne bouge pas » "
+                f"(test : prédire {int(err['annees_train'][-4:]) + 1} sans le connaître). "
+                + (
+                    "Le modèle fait un peu mieux."
+                    if bat
+                    else "<b>À cet horizon, le modèle ne fait pas mieux</b> : trop peu "
+                    "d'années pour apprendre. Lisez la prévision comme un ordre de grandeur."
+                )
+                + "</div>",
+                unsafe_allow_html=True,
+            )
     with col_cat:
         cat = catnat_commune(catnat, c["code_insee"])
         if cat.empty:
@@ -503,7 +589,27 @@ with st.expander("Méthode et limites"):
         "c'est une activité passée qui a pu polluer le sol. Le diagnostic le vérifie.\n"
         "- La **remontée de nappe** et les **argiles Géorisques** viennent du rapport Géorisques "
         "à l'adresse du collège. Les deux cartes des argiles ne classent pas pareil : "
-        "le sélecteur « Carte des argiles » montre l'effet sur le classement."
+        "le sélecteur « Carte des argiles » montre l'effet sur le classement.\n"
+        "- **Prévision des effectifs (ML)** : une régression Ridge par horizon prédit la "
+        "variation de l'effectif à partir des parts de 6e, 5e et 4e, de l'IPS et de la taille "
+        "du collège. Test : on cache la rentrée 2025, on la prédit, on mesure l'erreur. "
+        "Avec 7 rentrées connues, les horizons lointains ont peu d'exemples."
+    )
+    st.dataframe(
+        erreurs.assign(
+            horizon=erreurs["horizon"].map(lambda h: f"{h} an{'s' if h > 1 else ''}"),
+            mae_modele=erreurs["mae_modele"].round(1),
+            mae_naif=erreurs["mae_naif"].round(1),
+        )[["horizon", "mae_modele", "mae_naif", "n_train"]].rename(
+            columns={
+                "horizon": "Horizon",
+                "mae_modele": "Erreur du modèle (élèves)",
+                "mae_naif": "Erreur « ne bouge pas »",
+                "n_train": "Exemples d'entraînement",
+            }
+        ),
+        hide_index=True,
+        width="stretch",
     )
 st.markdown(
     '<div class="note" style="margin-top:18px">Sources : Département du Loiret (GéoLoiret), BRGM, '

@@ -8,6 +8,7 @@ l'appli lit seuls :
 - data/historique_publics.parquet : effectifs, IPS et brevet sur 10 rentrées
 - data/catnat_colleges.parquet : arrêtés CatNat des communes qui ont un collège public
 - data/georisques_colleges.parquet : le cache des appels à l'API Géorisques
+- data/previsions.parquet, data/prevision_erreurs.parquet : prévisions d'effectifs (ML) et erreurs
 
 Option --rafraichir : rappelle l'API Géorisques même si le cache existe.
 """
@@ -19,8 +20,10 @@ import pandas as pd
 from risques import (
     DATA,
     FICHIER_CATNAT,
+    FICHIER_ERREURS,
     FICHIER_GEORISQUES,
     FICHIER_HISTORIQUE,
+    FICHIER_PREVISIONS,
     FICHIER_PRIORITE,
     ajouter_familles,
     evolution_effectifs,
@@ -81,4 +84,14 @@ if __name__ == "__main__":
     catnat = preparer_catnat(df["code_insee"])
     catnat.to_parquet(FICHIER_CATNAT, index=False)
     print(f"{len(df)} collèges publics, {len(catnat)} arrêtés CatNat")
+
+    # Couche ML : prévision des effectifs à 1-5 ans (voir prevision.py), avec le backtest.
+    import prevision
+
+    brut = pd.read_parquet(DATA / "colleges.parquet")
+    previsions, erreurs = prevision.calculer(brut[brut["uai"].isin(df["uai"])])
+    previsions.to_parquet(FICHIER_PREVISIONS, index=False)
+    erreurs.to_parquet(FICHIER_ERREURS, index=False)
+    print("Erreur moyenne du modèle (élèves) :")
+    print(erreurs[["horizon", "mae_modele", "mae_naif", "n_train"]].round(1).to_string(index=False))
     print(df[["sol", "inondation", "techno", "pollution"]].sum().to_dict())

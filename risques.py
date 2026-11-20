@@ -21,6 +21,8 @@ FICHIER_PRIORITE = DATA / "colleges_priorite.parquet"
 FICHIER_HISTORIQUE = DATA / "historique_publics.parquet"
 FICHIER_CATNAT = DATA / "catnat_colleges.parquet"
 FICHIER_GEORISQUES = DATA / "georisques_colleges.parquet"
+FICHIER_PREVISIONS = DATA / "previsions.parquet"
+FICHIER_ERREURS = DATA / "prevision_erreurs.parquet"
 
 SEUIL_SEVESO_KM = 2.0
 SEUIL_CASIAS = 5  # anciens sites industriels à moins de 500 m ; 3e quartile des 58 collèges
@@ -111,14 +113,23 @@ def compter_familles(df: pd.DataFrame, familles: list[str]) -> pd.DataFrame:
     )
 
 
+def ajouter_prevision(df: pd.DataFrame, previsions: pd.DataFrame, horizon: int) -> pd.DataFrame:
+    """Ajoute l'effectif prévu à l'horizon choisi (colonnes effectif_prevu, annee_prevue)."""
+    p = previsions.loc[previsions["horizon"] == horizon, ["uai", "effectif_prevu", "annee"]]
+    return df.merge(p.rename(columns={"annee": "annee_prevue"}), on="uai", how="left")
+
+
 def filtrer_communes(df: pd.DataFrame, communes: list[str]) -> pd.DataFrame:
     """Garde les collèges des communes choisies ; aucune commune choisie = toutes."""
     return df[df["commune"].isin(communes)] if communes else df
 
 
-def classer(df: pd.DataFrame) -> pd.DataFrame:
-    """Le plus de familles d'abord, puis le plus d'élèves ; ajoute le rang."""
-    trie = df.sort_values(["nb_familles", "effectif_total"], ascending=[False, False])
+def classer(df: pd.DataFrame, eleves: str = "effectif_total") -> pd.DataFrame:
+    """Le plus de familles d'abord, puis le plus d'élèves ; ajoute le rang.
+
+    `eleves` : « effectif_total » (rentrée 2025) ou « effectif_prevu » (prévision du modèle).
+    """
+    trie = df.sort_values(["nb_familles", eleves], ascending=[False, False])
     return trie.assign(rang=range(1, len(trie) + 1))
 
 
@@ -131,6 +142,9 @@ def indicateurs(df: pd.DataFrame) -> dict[str, int]:
         "eleves_cumul": int(cumul["effectif_total"].sum()),
         "colleges_expose": int((df["nb_familles"] >= 1).sum()),
         "eleves_expose": int(df.loc[df["nb_familles"] >= 1, "effectif_total"].sum()),
+        "eleves_cumul_prevu": (
+            int(cumul["effectif_prevu"].sum()) if "effectif_prevu" in df else None
+        ),
     }
 
 
@@ -222,3 +236,8 @@ def charger_historique() -> pd.DataFrame:
 
 def charger_catnat() -> pd.DataFrame:
     return pd.read_parquet(FICHIER_CATNAT)
+
+
+def charger_previsions() -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Les prévisions d'effectifs (un collège × un horizon) et le tableau des erreurs."""
+    return pd.read_parquet(FICHIER_PREVISIONS), pd.read_parquet(FICHIER_ERREURS)
