@@ -17,6 +17,9 @@ from risques import (
     DIAGNOSTICS,
     FAMILLES,
     FAMILLES_COURT,
+    FICHIER_CATNAT,
+    FICHIER_HISTORIQUE,
+    FICHIER_PRIORITE,
     ORLEANS,
     SEUIL_CASIAS,
     SEUIL_SEVESO_KM,
@@ -41,7 +44,9 @@ RAYON_ORLEANS_KM = 15
 
 
 @st.cache_data
-def donnees():
+def donnees(version: tuple[float, ...]):
+    """Les trois Parquet préparés. `version` (dates de modification des fichiers) fait partie
+    de la clé du cache : après un git push qui change les données, le cache se renouvelle."""
     return charger_priorite(), charger_historique(), charger_catnat()
 
 
@@ -70,7 +75,9 @@ def point_clique(cle: str) -> str | None:
     return uai if uai and uai != precedent else None
 
 
-colleges, historique, catnat = donnees()
+colleges, historique, catnat = donnees(
+    tuple(f.stat().st_mtime for f in (FICHIER_PRIORITE, FICHIER_HISTORIQUE, FICHIER_CATNAT))
+)
 
 # ---------------------------------------------------------------- filtres
 with st.sidebar:
