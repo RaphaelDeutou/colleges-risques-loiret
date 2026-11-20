@@ -54,10 +54,12 @@ Nous avons aussi regardé ce qui ne départage pas, et l'avons écarté : le **r
 | Données | **pandas** + **Parquet** (pyarrow) | Parquet est léger (moins de 1 Mo ici) et garde les types ; la préparation tourne une fois dans `preparer.py` |
 | Enrichissement | **API Géorisques** (`georisques.py`, bibliothèque standard `urllib`) | appelée une seule fois, résultat mis en cache dans `data/georisques_colleges.parquet` : l'appli ne dépend pas d'internet |
 | Machine learning | **scikit-learn** (`prevision.py`) | régression Ridge, une par horizon de 1 à 5 ans, évaluée contre une méthode naïve |
+| API | **FastAPI** (`api.py`), hébergée sur **Render** | les données et les calculs derrière une API que n'importe quel client peut appeler ; paramètres validés |
+| Agent | serveur **MCP** (`mcp_server.py`, FastMCP) + LLM **Groq** (`chatbot.py`) | un assistant qui répond en appelant des outils, donc avec les vrais chiffres |
 | Appli web | **Streamlit** | une seule page en Python, déploiement gratuit, clic sur un graphique avec `on_select` pour le drill-down |
 | Graphiques | **Plotly Express** | carte interactive (fond CARTO sombre), barres cliquables, survols |
 | Design | CSS dans `theme.py` + `.streamlit/config.toml` | thème sombre repris de mon portfolio |
-| Qualité | **ruff** (style), **pytest** (12 tests) | grille : « ruff propre, un test » |
+| Qualité | **ruff** (style), **pytest** (18 tests) | grille : « ruff propre, un test » |
 | Hébergement | **GitHub** + **Streamlit Community Cloud** | chaque `git push` redéploie l'appli |
 | Assistant | Claude Code | exploration du catalogue, cadrage, code (dit dans le README) |
 

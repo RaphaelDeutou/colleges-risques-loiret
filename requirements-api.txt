@@ -1,0 +1,6 @@
+# Dépendances de l'API seule (api.py + risques.py), pour Render : plus léger que tout le projet.
+fastapi==0.165.0
+uvicorn==0.54.0
+pandas==3.1.1
+pyarrow==26.0.1
+numpy==2.5.5

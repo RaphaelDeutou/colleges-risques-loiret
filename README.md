@@ -6,13 +6,34 @@
 
 **Appli en ligne** : https://colleges-risques-loiret.streamlit.app/
 
+**API (FastAPI)** : _à compléter après le déploiement sur Render_ · documentation sur `/docs`
+
+## Architecture
+
+```
+Appli Streamlit ── chatbot ──► LLM Groq (choisit un outil)
+       │                 │
+       │                 └─► client MCP ──► mcp_server.py (5 outils) ──► API FastAPI (api.py)
+       │                                                                      │
+       └──────────── risques.py (calculs communs) ◄──────────────────────────┘
+                              │
+                        data/*.parquet
+```
+
+L'appli, l'API et donc le chatbot utilisent les mêmes calculs (`risques.py`) : ils donnent les mêmes chiffres. Le chatbot lance lui-même le serveur MCP (en stdio) ; le serveur MCP appelle l'API par HTTP.
+
 ## Lancer en local
 
 ```bash
 uv sync
-uv run python preparer.py        # une fois : écrit data/colleges_priorite.parquet
-uv run streamlit run app.py
+uv run python preparer.py        # une fois : écrit les Parquet préparés dans data/
+uv run uvicorn api:app --host 127.0.0.1 --port 8000      # terminal 1 : l'API
+uv run streamlit run app.py                               # terminal 2 : l'appli
 ```
+
+Pour l'assistant, copiez `.streamlit/secrets.toml.example` en `.streamlit/secrets.toml` (ignoré par git) et collez votre clé Groq (https://console.groq.com/keys). Sans clé, l'appli fonctionne et l'assistant explique comment le configurer.
+
+Tester le serveur MCP seul : `npx @modelcontextprotocol/inspector uv run python mcp_server.py` (l'API doit tourner).
 
 Tests et qualité :
 
@@ -27,6 +48,10 @@ uv run ruff check . && uv run ruff format --check .
 |---|---|
 | `preparer.py` | préparation hors de l'appli : 58 collèges publics, familles de risque, évolution des effectifs, historique et arrêtés CatNat des communes |
 | `prevision.py` | couche ML : prévision des effectifs à 1-5 ans (régression Ridge) et son backtest |
+| `api.py` | API FastAPI : `/indicateurs`, `/colleges`, `/colleges/recherche`, `/colleges/{uai}`, `/communes/{commune}/catnat` ; paramètres validés (422) |
+| `mcp_server.py` | serveur MCP (FastMCP) : 5 outils pour le LLM, qui appellent l'API |
+| `chatbot.py` | le chatbot : lance le serveur MCP, passe ses outils au LLM, exécute les appels |
+| `render.yaml`, `requirements-api.txt` | déploiement de l'API seule sur Render |
 | `georisques.py` | appel à l'API Géorisques (anciens sites industriels, remontée de nappe, argiles), mis en cache dans `data/georisques_colleges.parquet` |
 | `risques.py` | calculs, sans affichage : règles des familles, classement, indicateurs, fiche collège |
 | `theme.py` | design : couleurs, polices, cartes en verre, mise en forme des graphiques |
@@ -34,6 +59,8 @@ uv run ruff check . && uv run ruff format --check .
 | `app.py` | affichage Streamlit : filtres, indicateurs, classement ou carte cliquables, fiche collège |
 | `tests/test_risques.py` | règles des familles, seuils, classement, préparation |
 | `tests/test_prevision.py` | construction des exemples et prévisions du modèle |
+| `tests/test_chatbot.py` | chaîne chatbot → MCP → API avec un faux LLM, validation de l'API |
+| `tests/test_app.py` | l'appli s'ouvre, et la fiche de chacun des 58 collèges aussi |
 | `REPONSES.md` | réponses aux questions du cas, chiffres à l'appui |
 | `data/` | les Parquet du cas et le Parquet préparé |
 | `CADRAGE.md` | la fiche de cadrage |
@@ -56,6 +83,27 @@ Quatre familles de risque, chacune avec une règle simple :
 - **sols pollués** : au moins 5 anciens sites industriels (CASIAS) à moins de 500 m, le quart des collèges les plus entourés
 
 On classe d'abord par nombre de familles, puis par nombre d'élèves. Les rayons et seuils sont des choix du projet, pas des seuils officiels : la partie « Sensibilité » de l'appli permet de les changer. Un aléa n'est pas un risque, un périmètre de PPRI n'est pas la zone inondable, et un ancien site industriel n'est pas une pollution prouvée.
+
+## Assistant : LLM, MCP et FastAPI
+
+Le chatbot (section « 03 · Assistant ») envoie la question à un LLM **Groq** avec la liste des outils du serveur MCP. Le LLM choisit un outil d'après son nom et sa description ; le chatbot l'exécute via MCP, l'outil appelle l'API, et le résultat repart au LLM, qui rédige la réponse. Les outils appelés sont affichés sous chaque réponse.
+
+| Outil MCP | Route de l'API | Sert à |
+|---|---|---|
+| `indicateurs_risques` | `GET /indicateurs` | chiffres clés, par commune ou pour tout le département |
+| `classement_colleges` | `GET /colleges` | les collèges à diagnostiquer en priorité |
+| `chercher_college` | `GET /colleges/recherche` | retrouver l'identifiant d'un collège à partir de son nom |
+| `fiche_college` | `GET /colleges/{uai}` | risques expliqués, diagnostics, effectifs, prévision, CatNat |
+| `arretes_catnat` | `GET /communes/{commune}/catnat` | les catastrophes naturelles déjà reconnues dans une commune |
+
+Seules des données publiques et agrégées partent vers Groq. La clé reste dans les secrets, jamais dans git.
+
+### Déployer
+
+1. **API sur Render** : New → Blueprint → ce dépôt (`render.yaml`). Notez l'URL du service, par exemple `https://colleges-risques-api.onrender.com`, et vérifiez `/sante` et `/docs`.
+2. **Secrets sur Streamlit Cloud** : Manage app → Settings → Secrets, collez le contenu de `.streamlit/secrets.toml.example` avec votre clé Groq et `API_URL` = l'URL Render.
+
+L'offre gratuite de Render endort l'API après 15 minutes sans appel : la première question met environ une minute.
 
 ## Couche ML : prévision des effectifs
 

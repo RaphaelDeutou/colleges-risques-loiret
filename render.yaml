@@ -1,0 +1,13 @@
+# Déploiement de l'API FastAPI sur Render (Blueprint) : New → Blueprint → ce dépôt.
+# Offre gratuite : le service s'endort après 15 min sans appel et met environ 1 min à se réveiller.
+services:
+  - type: web
+    name: colleges-risques-api
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements-api.txt
+    startCommand: uvicorn api:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /sante
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.10"

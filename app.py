@@ -12,6 +12,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
+import chatbot
 import theme
 from risques import (
     CARTES_ARGILES,
@@ -575,6 +576,99 @@ with st.container(key="verre_fiche"):
             )
             hist.update_yaxes(title=None, dtick=1)
             st.plotly_chart(hist, width="stretch", config={"displayModeBar": False})
+
+# ---------------------------------------------------------------- assistant (LLM + MCP)
+EXEMPLES = [
+    "Quels collèges diagnostiquer en premier à Orléans ?",
+    "Pourquoi Montjoie est-il prioritaire ?",
+    "Combien d'élèves sont exposés à au moins deux risques en 2028 ?",
+]
+
+
+def reglages_llm() -> dict[str, str]:
+    """Adresse, clé et modèle du LLM, et adresse de l'API, lus dans les secrets Streamlit."""
+    try:
+        return {k: st.secrets.get(k, "") for k in ("LLM_URL", "LLM_KEY", "LLM_MODEL", "API_URL")}
+    except FileNotFoundError:  # pas de .streamlit/secrets.toml
+        return {}
+
+
+def poser(question: str, cfg: dict[str, str]) -> None:
+    """Ajoute la question, interroge le LLM (qui appelle les outils MCP), garde la réponse."""
+    st.session_state.messages.append({"role": "user", "content": question})
+    conversation = [{"role": m["role"], "content": m["content"]} for m in st.session_state.messages]
+    try:
+        texte, appels = chatbot.repondre(
+            conversation,
+            cfg["LLM_URL"],
+            cfg["LLM_KEY"],
+            cfg["LLM_MODEL"],
+            cfg.get("API_URL") or "http://127.0.0.1:8000",
+        )
+    except Exception as erreur:  # LLM indisponible, quota atteint, API endormie…
+        texte, appels = (
+            "Je n'ai pas pu répondre : le service du LLM ou l'API n'a pas répondu. "
+            "Réessayez dans une minute (l'API hébergée sur Render met environ une minute à se "
+            "réveiller).",
+            [],
+        )
+        st.session_state.derniere_erreur = f"{type(erreur).__name__} : {erreur}"
+    st.session_state.messages.append({"role": "assistant", "content": texte, "appels": appels})
+
+
+st.markdown(
+    '<div class="section"><div class="eyebrow">03 · Assistant</div>'
+    "<h2>Posez votre question aux données</h2></div>",
+    unsafe_allow_html=True,
+)
+cfg = reglages_llm()
+st.session_state.setdefault("messages", [])
+with st.container(key="verre_chat"):
+    if not cfg.get("LLM_KEY"):
+        st.info(
+            "L'assistant a besoin d'une clé Groq. Créez-la sur console.groq.com, puis "
+            "copiez .streamlit/secrets.toml.example en .streamlit/secrets.toml et remplissez-le "
+            "(sur Streamlit Cloud : Manage app → Settings → Secrets)."
+        )
+    else:
+        st.markdown(
+            '<div class="aide">Le LLM répond en appelant les outils du serveur MCP, qui '
+            "interrogent l'API FastAPI : les chiffres sont ceux de l'appli.</div>",
+            unsafe_allow_html=True,
+        )
+        if not st.session_state.messages:
+            colonnes = st.columns(len(EXEMPLES))
+            for col, exemple in zip(colonnes, EXEMPLES, strict=True):
+                if col.button(exemple, width="stretch"):
+                    with st.spinner("L'assistant interroge les données…"):
+                        poser(exemple, cfg)
+                    st.rerun()
+        for m in st.session_state.messages:
+            with st.chat_message(m["role"]):
+                st.markdown(m["content"])
+                if m.get("appels"):
+                    outils = " · ".join(
+                        f"{a['outil']}({', '.join(f'{k}={v}' for k, v in a['arguments'].items())})"
+                        + (" — erreur" if a["erreur"] else "")
+                        for a in m["appels"]
+                    )
+                    st.caption(f"Outils MCP appelés : {outils}")
+        if question := st.chat_input("Ex. : quel diagnostic demander pour Clos Ferbois ?"):
+            with st.spinner("L'assistant interroge les données…"):
+                poser(question, cfg)
+            st.rerun()
+        if st.session_state.messages:
+            if st.button("Effacer la conversation"):
+                st.session_state.messages = []
+                st.session_state.pop("derniere_erreur", None)
+                st.rerun()
+            st.caption(
+                f"Réponses générées par {cfg['LLM_MODEL']} à partir des outils MCP. "
+                "Un LLM peut se tromper : vérifiez les chiffres dans la fiche collège."
+            )
+        if erreur := st.session_state.get("derniere_erreur"):
+            with st.expander("Détail de la dernière erreur"):
+                st.code(erreur)
 
 # ---------------------------------------------------------------- méthode et sources
 with st.expander("Méthode et limites"):
