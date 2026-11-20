@@ -7,6 +7,7 @@ Parcours : indicateurs → carte ou classement (un clic choisit un collège) →
 
 from html import escape
 
+import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
@@ -439,7 +440,7 @@ detail = facteurs(c, seuil_seveso, seuil_casias)
 with st.container(key="verre_fiche"):
     evol = c["evolution_pct"]
     evol_txt = (
-        "" if evol != evol else f" · <b>{evol:+.1f} %</b> d'élèves depuis 2020".replace(".", ",")
+        "" if pd.isna(evol) else f" · <b>{evol:+.1f} %</b> d'élèves depuis 2020".replace(".", ",")
     )
     chips = "".join(
         f'<span class="chip{" on" if c[f] else ""}" style="--c:{theme.COULEURS_FAMILLES[f]}">'
@@ -476,7 +477,7 @@ with st.container(key="verre_fiche"):
         annee = c["annee_dicrim"]
         dicrim = (
             "Pas de DICRIM communal recensé."
-            if annee is None or annee != annee
+            if pd.isna(annee)
             else f"DICRIM communal de {int(annee)}."
         )
         st.markdown(
