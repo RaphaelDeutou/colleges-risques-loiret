@@ -83,6 +83,11 @@ def compter_familles(df: pd.DataFrame, familles: list[str]) -> pd.DataFrame:
     )
 
 
+def filtrer_communes(df: pd.DataFrame, communes: list[str]) -> pd.DataFrame:
+    """Garde les collèges des communes choisies ; aucune commune choisie = toutes."""
+    return df[df["commune"].isin(communes)] if communes else df
+
+
 def classer(df: pd.DataFrame) -> pd.DataFrame:
     """Le plus de familles d'abord, puis le plus d'élèves ; ajoute le rang."""
     trie = df.sort_values(["nb_familles", "effectif_total"], ascending=[False, False])

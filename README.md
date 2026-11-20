@@ -40,7 +40,7 @@ uv run ruff check . && uv run ruff format --check .
 2. Le classement des collèges exposés, ou la carte : un clic sur une barre ou un point choisit un collège.
 3. La fiche du collège : ses facteurs de risque avec les chiffres sources, le diagnostic à demander, ses effectifs sur 10 rentrées et les arrêtés CatNat de sa commune.
 
-Filtres : familles de risque, collèges qui gagnent des élèves, rayon Seveso (pour tester la sensibilité du classement).
+Filtres : familles de risque, communes (la carte zoome sur les communes choisies), collèges qui gagnent des élèves, rayon Seveso (pour tester la sensibilité du classement).
 
 ## Classement
 

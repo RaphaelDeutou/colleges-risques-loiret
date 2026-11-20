@@ -8,6 +8,7 @@ from risques import (
     classer,
     compter_familles,
     distance_km,
+    filtrer_communes,
     indicateurs,
 )
 
@@ -89,3 +90,9 @@ def test_catnat_commune_regroupe_les_perils():
         (2018, "Sécheresse"): 1,
     }
     assert catnat_commune(catnat, "99999").empty
+
+
+def test_filtrer_communes():
+    df = pd.DataFrame({"commune": ["Orléans", "Olivet", "Jargeau"]})
+    assert filtrer_communes(df, []).equals(df)  # aucune commune choisie = toutes
+    assert filtrer_communes(df, ["Olivet", "Jargeau"])["commune"].tolist() == ["Olivet", "Jargeau"]

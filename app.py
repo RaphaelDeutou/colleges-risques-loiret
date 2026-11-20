@@ -27,6 +27,7 @@ from risques import (
     compter_familles,
     distance_km,
     facteurs,
+    filtrer_communes,
     historique_college,
     indicateurs,
 )
@@ -80,6 +81,12 @@ with st.sidebar:
         format_func=FAMILLES_COURT.get,
         help="Le classement ne compte que les familles choisies.",
     )
+    communes = st.multiselect(
+        "Communes",
+        options=sorted(colleges["commune"].unique()),
+        placeholder="Toutes les communes",
+        help="Sans choix, toutes les communes qui ont un collège public sont affichées.",
+    )
     seulement_hausse = st.toggle("Seulement les collèges qui gagnent des élèves (2020 → 2025)")
     seuil_seveso = st.slider(
         "Distance à un site Seveso comptée comme risque (km)",
@@ -103,6 +110,7 @@ if not familles:
     st.stop()
 
 vue = compter_familles(ajouter_familles(colleges, seuil_seveso), familles)
+vue = filtrer_communes(vue, communes)
 if seulement_hausse:
     vue = vue[vue["evolution_pct"] > 0]
 if vue.empty:
@@ -111,6 +119,12 @@ if vue.empty:
 vue = classer(vue)
 vue["niveau"] = vue["nb_familles"].map(niveau)
 k = indicateurs(vue)
+perimetre = f"rentrée 2025 · {k['colleges']} collège{'s' if k['colleges'] > 1 else ''} public"
+perimetre += "s" if k["colleges"] > 1 else ""
+if communes:
+    perimetre += " · " + (
+        ", ".join(communes) if len(communes) <= 3 else f"{len(communes)} communes"
+    )
 
 # ---------------------------------------------------------------- collège choisi
 options = vue["uai"].tolist()
@@ -124,15 +138,30 @@ choisi = st.session_state["college"]
 
 # ---------------------------------------------------------------- en-tête
 part = k["eleves_cumul"] / max(vue["effectif_total"].sum(), 1)
+# Le titre dit le constat, accordé au nombre : aucun, un, ou plusieurs collèges.
+if k["colleges_cumul"] == 0:
+    titre_hero = 'Aucun collège ne cumule <span class="serif grad">deux risques</span>'
+    phrase = (
+        f"Mais <b>{k['colleges_expose']} sur {k['colleges']}</b> sont exposés à un risque "
+        f"({fr(k['eleves_expose'])} élèves)."
+    )
+else:
+    un = k["colleges_cumul"] == 1
+    titre_hero = (
+        f"{k['colleges_cumul']} collège{'' if un else 's'} cumule{'' if un else 'nt'} "
+        '<span class="serif grad">au moins deux risques</span>'
+    )
+    phrase = (
+        f"<b>{fr(k['eleves_cumul'])} élèves</b> y ont cours, soit {part:.0%} des élèves "
+        "des collèges affichés."
+    )
 st.markdown(
     f"""
 <div class="hero">
   <span class="pill"><span class="dot"></span>Département du Loiret
-    <span class="tag">rentrée 2025 · {k["colleges"]} collèges publics</span></span>
-  <h1>{k["colleges_cumul"]} collèges cumulent
-    <span class="serif grad">au moins deux risques</span></h1>
-  <p class="lead"><b>{fr(k["eleves_cumul"])} élèves</b> y ont cours, soit {part:.0%} des élèves
-    des collèges affichés. Cliquez un collège sur la carte ou dans le classement pour savoir
+    <span class="tag">{escape(perimetre)}</span></span>
+  <h1>{titre_hero}</h1>
+  <p class="lead">{phrase} Cliquez un collège sur la carte ou dans le classement pour savoir
     <b>quel diagnostic demander en premier</b>.</p>
   <div class="kpis">
     <div class="kpi"><div class="lab">Collèges à 2 risques ou +</div>
@@ -199,8 +228,13 @@ def afficher_carte() -> None:
                 "commune": "Commune",
             },
             map_style="carto-darkmatter",
-            center={"lat": 47.9, "lon": 2.3},
-            zoom=7.75,
+            # Tout le Loiret par défaut ; zoom sur les collèges des communes choisies.
+            center=(
+                {"lat": vue["lat"].mean(), "lon": vue["lon"].mean()}
+                if communes
+                else {"lat": 47.9, "lon": 2.3}
+            ),
+            zoom=7.75 if not communes else (11 if len(communes) == 1 else 9),
         )
         sel = vue[vue["uai"] == choisi]
         carte.add_trace(
