@@ -17,7 +17,8 @@ def college(**kw):
     base = {
         "argiles_classe": "moyen", "nb_cavites_500m": 0, "nb_mouvements_terrain_500m": 0,
         "dans_ppri": False, "dans_zone_tmd_500m": False, "distance_seveso_km": 10.0,
-        "effectif_total": 500,
+        "effectif_total": 500, "argiles_georisques": "Risque Existant - modéré",
+        "nappe_georisques": "Risque non Connu", "nb_casias_500m": 0,
     }  # fmt: skip
     return {**base, **kw}
 
@@ -56,7 +57,8 @@ def test_classement_et_indicateurs_suivent_les_familles_cochees():
 def test_preparation_garde_les_58_colleges_publics():
     df = preparer()
     assert len(df) == 58 and df["uai"].is_unique
-    assert {"sol", "inondation", "techno", "evolution_pct"} <= set(df.columns)
+    assert {"sol", "inondation", "techno", "pollution", "evolution_pct"} <= set(df.columns)
+    assert df["nb_casias_500m"].notna().all()  # le cache Géorisques couvre les 58 collèges
 
 
 def test_seuil_seveso_reglable():
@@ -96,3 +98,20 @@ def test_filtrer_communes():
     df = pd.DataFrame({"commune": ["Orléans", "Olivet", "Jargeau"]})
     assert filtrer_communes(df, []).equals(df)  # aucune commune choisie = toutes
     assert filtrer_communes(df, ["Olivet", "Jargeau"])["commune"].tolist() == ["Olivet", "Jargeau"]
+
+
+def test_nappe_compte_comme_inondation():
+    df = ajouter_familles(pd.DataFrame([college(nappe_georisques="Risque Existant")]))
+    assert df.loc[0, "inondation"]
+
+
+def test_seuil_des_anciens_sites_industriels():
+    df = pd.DataFrame([college(nb_casias_500m=4), college(nb_casias_500m=5)])
+    assert ajouter_familles(df)["pollution"].tolist() == [False, True]  # seuil par défaut : 5
+    assert ajouter_familles(df, seuil_casias=1)["pollution"].tolist() == [True, True]
+
+
+def test_la_carte_des_argiles_change_la_famille_sol():
+    df = pd.DataFrame([college(argiles_georisques="Risque Existant - important")])
+    assert not ajouter_familles(df, carte_argiles="geoloiret").loc[0, "sol"]  # moyen
+    assert ajouter_familles(df, carte_argiles="georisques").loc[0, "sol"]  # important

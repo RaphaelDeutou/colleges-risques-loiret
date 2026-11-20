@@ -1,10 +1,14 @@
 """Calculs du projet, sans affichage : les familles de risque et les indicateurs.
 
-Trois familles, chacune une règle simple qu'on peut expliquer à un élu :
-- sol : aléa argiles fort au point du collège, ou cavité, ou mouvement de terrain à moins de 500 m
-- inondation : le collège est dans un périmètre de PPRI (ce n'est pas la zone inondable)
+Quatre familles, chacune une règle simple qu'on peut expliquer à un élu :
+- sol : argiles au niveau le plus haut de la carte choisie (GéoLoiret « fort » ou Géorisques
+  « important »), ou cavité, ou mouvement de terrain à moins de 500 m
+- inondation : dans un périmètre de PPRI (ce n'est pas la zone inondable), ou remontée de nappe
+  « risque existant » selon Géorisques
 - technologique : zone de sûreté TMD de 500 m, ou site Seveso à moins de 2 km (réglable)
-Les rayons sont des choix du projet, pas des seuils officiels.
+- sols pollués : au moins 5 anciens sites industriels (CASIAS) à moins de 500 m (réglable) ;
+  5 est le seuil du quart des collèges les plus entourés
+Les rayons et seuils sont des choix du projet, pas des seuils officiels.
 """
 
 from pathlib import Path
@@ -16,20 +20,36 @@ DATA = Path(__file__).resolve().parent / "data"
 FICHIER_PRIORITE = DATA / "colleges_priorite.parquet"
 FICHIER_HISTORIQUE = DATA / "historique_publics.parquet"
 FICHIER_CATNAT = DATA / "catnat_colleges.parquet"
+FICHIER_GEORISQUES = DATA / "georisques_colleges.parquet"
 
 SEUIL_SEVESO_KM = 2.0
+SEUIL_CASIAS = 5  # anciens sites industriels à moins de 500 m ; 3e quartile des 58 collèges
 ANNEE_REF, ANNEE_FIN = 2020, 2025  # évolution des effectifs sur 5 rentrées
+
+# Deux cartes des argiles, et la classe retenue comme « argiles fortes » dans chacune.
+CARTES_ARGILES = {
+    "geoloiret": ("argiles_classe", "fort"),
+    "georisques": ("argiles_georisques", "Risque Existant - important"),
+}
+NAPPE_EXISTANTE = "Risque Existant"
 
 FAMILLES = {
     "sol": "Sol (argiles fortes, cavités, mouvements)",
-    "inondation": "Inondation (périmètre PPRI)",
+    "inondation": "Inondation (PPRI, remontée de nappe)",
     "techno": "Technologique (TMD, Seveso)",
+    "pollution": "Sols pollués (anciens sites industriels)",
 }
-FAMILLES_COURT = {"sol": "Sol", "inondation": "Inondation", "techno": "Technologique"}
+FAMILLES_COURT = {
+    "sol": "Sol",
+    "inondation": "Inondation",
+    "techno": "Technologique",
+    "pollution": "Sols pollués",
+}
 DIAGNOSTICS = {
     "sol": "étude géotechnique",
     "inondation": "diagnostic de vulnérabilité inondation",
     "techno": "revue du plan de mise en sûreté (confinement)",
+    "pollution": "diagnostic de la qualité des sols et de l'air intérieur",
 }
 PERILS = {  # libellés GASPAR -> trois périls lisibles
     "Sécheresse": "Sécheresse",
@@ -40,14 +60,22 @@ PERILS = {  # libellés GASPAR -> trois périls lisibles
 }
 
 
-def ajouter_familles(df: pd.DataFrame, seuil_seveso_km: float = SEUIL_SEVESO_KM) -> pd.DataFrame:
+def ajouter_familles(
+    df: pd.DataFrame,
+    seuil_seveso_km: float = SEUIL_SEVESO_KM,
+    carte_argiles: str = "geoloiret",
+    seuil_casias: int = SEUIL_CASIAS,
+) -> pd.DataFrame:
     """Ajoute une colonne booléenne par famille de risque."""
+    colonne, classe_forte = CARTES_ARGILES[carte_argiles]
     return df.assign(
-        sol=df["argiles_classe"].eq("fort")
+        sol=df[colonne].eq(classe_forte).fillna(False)
         | df["nb_cavites_500m"].gt(0)
         | df["nb_mouvements_terrain_500m"].gt(0),
-        inondation=df["dans_ppri"].astype(bool),
+        inondation=df["dans_ppri"].astype(bool)
+        | df["nappe_georisques"].eq(NAPPE_EXISTANTE).fillna(False),
         techno=df["dans_zone_tmd_500m"].astype(bool) | df["distance_seveso_km"].lt(seuil_seveso_km),
+        pollution=df["nb_casias_500m"].ge(seuil_casias),
     )
 
 
@@ -122,10 +150,22 @@ def distance_km(lat: pd.Series, lon: pd.Series, origine: tuple[float, float]) ->
     return 6371 * 2 * np.arcsin(np.sqrt(a))
 
 
-def facteurs(ligne: pd.Series, seuil_seveso_km: float = SEUIL_SEVESO_KM) -> dict[str, str]:
+def statut_court(statut: object) -> str:
+    """« Risque Existant - important » -> « existant, important » ; vide -> « non renseigné »."""
+    if not isinstance(statut, str) or not statut:
+        return "non renseigné"
+    return statut.removeprefix("Risque ").replace(" - ", ", ").lower()
+
+
+def facteurs(
+    ligne: pd.Series,
+    seuil_seveso_km: float = SEUIL_SEVESO_KM,
+    seuil_casias: int = SEUIL_CASIAS,
+) -> dict[str, str]:
     """Pour la fiche : ce qui explique chaque famille, en une phrase avec les chiffres sources."""
     sol = (
-        f"Argiles : aléa {ligne['argiles_classe']} au point du collège · "
+        f"Argiles : aléa {ligne['argiles_classe']} selon GéoLoiret, "
+        f"{statut_court(ligne['argiles_georisques'])} selon Géorisques · "
         f"{ligne['nb_cavites_500m']} cavité(s) et {ligne['nb_mouvements_terrain_500m']} "
         "mouvement(s) de terrain à moins de 500 m"
     )
@@ -133,14 +173,23 @@ def facteurs(ligne: pd.Series, seuil_seveso_km: float = SEUIL_SEVESO_KM) -> dict
         inondation = f"Dans le périmètre du {ligne['ppri']}"
     else:
         inondation = "Hors périmètre de PPRI"
-    inondation += f" · repère de crue le plus proche à {km(ligne['distance_repere_crue_km'])}"
+    inondation += (
+        f" · remontée de nappe : {statut_court(ligne['nappe_georisques'])}"
+        f" · repère de crue le plus proche à {km(ligne['distance_repere_crue_km'])}"
+    )
+    n = int(ligne["nb_casias_500m"])
+    pollution = (
+        f"{n} ancien(s) site(s) industriel(s) à moins de 500 m (seuil retenu : {seuil_casias})"
+    )
+    if n:
+        pollution += f" · les plus proches : {ligne['casias_proches']}"
     zone = "dans la zone de 500 m" if ligne["dans_zone_tmd_500m"] else "hors zone de 500 m"
     techno = (
         f"Axe TMD ({str(ligne['type_tmd_proche']).lower()}) à {ligne['distance_tmd_m']} m, "
         f"{zone} · site Seveso à {km(ligne['distance_seveso_km'])} "
         f"(seuil retenu : {km(seuil_seveso_km)})"
     )
-    return {"sol": sol, "inondation": inondation, "techno": techno}
+    return {"sol": sol, "inondation": inondation, "techno": techno, "pollution": pollution}
 
 
 def historique_college(historique: pd.DataFrame, uai: str) -> pd.DataFrame:

@@ -13,10 +13,12 @@ import streamlit as st
 
 import theme
 from risques import (
+    CARTES_ARGILES,
     DIAGNOSTICS,
     FAMILLES,
     FAMILLES_COURT,
     ORLEANS,
+    SEUIL_CASIAS,
     SEUIL_SEVESO_KM,
     ajouter_familles,
     catnat_commune,
@@ -88,6 +90,18 @@ with st.sidebar:
         help="Sans choix, toutes les communes qui ont un collège public sont affichées.",
     )
     seulement_hausse = st.toggle("Seulement les collèges qui gagnent des élèves (2020 → 2025)")
+    st.markdown("### Sensibilité")
+    carte_argiles = (
+        st.segmented_control(
+            "Carte des argiles",
+            options=list(CARTES_ARGILES),
+            default="geoloiret",
+            format_func={"geoloiret": "GéoLoiret", "georisques": "Géorisques"}.get,
+            help="GéoLoiret compte 10 collèges en aléa fort, Géorisques 34 en exposition "
+            "importante : le classement dépend de la carte choisie.",
+        )
+        or "geoloiret"
+    )
     seuil_seveso = st.slider(
         "Distance à un site Seveso comptée comme risque (km)",
         min_value=0.5,
@@ -96,12 +110,22 @@ with st.sidebar:
         step=0.5,
         help="Testez la sensibilité du classement à ce rayon, qui est un choix du projet.",
     )
+    seuil_casias = st.slider(
+        "Anciens sites industriels à moins de 500 m, à partir de",
+        min_value=1,
+        max_value=20,
+        value=SEUIL_CASIAS,
+        help="Par défaut 5 : le quart des collèges les plus entourés. À 1, 40 collèges sur 58 "
+        "seraient comptés.",
+    )
     st.markdown("### Règles")
     st.markdown(
-        '<div class="note"><b>Sol</b> : argiles fortes au point du collège, ou cavité, ou '
+        '<div class="note"><b>Sol</b> : argiles fortes selon la carte choisie, ou cavité, ou '
         "mouvement de terrain à moins de 500 m.<br><b>Inondation</b> : dans un périmètre de "
-        "PPRI.<br><b>Technologique</b> : zone TMD de 500 m, ou site Seveso dans le rayon "
-        "choisi.<br><br>Rayons choisis par le projet, pas des seuils officiels.</div>",
+        "PPRI, ou remontée de nappe existante.<br><b>Technologique</b> : zone TMD de 500 m, "
+        "ou site Seveso dans le rayon choisi.<br><b>Sols pollués</b> : anciens sites "
+        "industriels (CASIAS) à moins de 500 m, au-delà du seuil choisi.<br><br>Rayons et "
+        "seuils choisis par le projet, pas des seuils officiels.</div>",
         unsafe_allow_html=True,
     )
 
@@ -109,7 +133,9 @@ if not familles:
     st.warning("Choisissez au moins une famille de risque.")
     st.stop()
 
-vue = compter_familles(ajouter_familles(colleges, seuil_seveso), familles)
+vue = compter_familles(
+    ajouter_familles(colleges, seuil_seveso, carte_argiles, seuil_casias), familles
+)
 vue = filtrer_communes(vue, communes)
 if seulement_hausse:
     vue = vue[vue["evolution_pct"] > 0]
@@ -352,7 +378,7 @@ st.selectbox(
     help="Ou cliquez un collège sur la carte ou dans le classement.",
 )
 c = noms.loc[choisi]
-detail = facteurs(c, seuil_seveso)
+detail = facteurs(c, seuil_seveso, seuil_casias)
 
 with st.container(key="verre_fiche"):
     evol = c["evolution_pct"]
@@ -465,10 +491,16 @@ with st.expander("Méthode et limites"):
         "- Un arrêté **CatNat** suppose que le maire l'ait demandé : les comptes disent la "
         "procédure autant que la catastrophe.\n"
         "- Les installations classées (ICPE) ne sont pas utilisées : tous les collèges en ont une "
-        "à moins de 2,2 km, et la couche compte aussi des élevages et des éoliennes."
+        "à moins de 2,2 km, et la couche compte aussi des élevages et des éoliennes.\n"
+        "- Un **ancien site industriel** (inventaire CASIAS) n'est pas une pollution prouvée : "
+        "c'est une activité passée qui a pu polluer le sol. Le diagnostic le vérifie.\n"
+        "- La **remontée de nappe** et les **argiles Géorisques** viennent du rapport Géorisques "
+        "à l'adresse du collège. Les deux cartes des argiles ne classent pas pareil : "
+        "le sélecteur « Carte des argiles » montre l'effet sur le classement."
     )
 st.markdown(
     '<div class="note" style="margin-top:18px">Sources : Département du Loiret (GéoLoiret), BRGM, '
-    "DDT45, Géorisques (GASPAR), ministère de l'Éducation nationale · Licence Ouverte 2.0</div>",
+    "DDT45, Géorisques (API : CASIAS, remontée de nappe, argiles ; GASPAR), "
+    "ministère de l'Éducation nationale · Licence Ouverte 2.0</div>",
     unsafe_allow_html=True,
 )

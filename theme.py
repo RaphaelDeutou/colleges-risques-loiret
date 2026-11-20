@@ -7,8 +7,14 @@ WARN, BAD = "#fbbf24", "#fb7185"
 LIGNE = "rgba(255,255,255,.08)"
 
 # Le nombre de risques est toujours écrit en clair à côté de la couleur.
-NIVEAUX = {"3 risques": BAD, "2 risques": WARN, "1 risque": A2, "aucun risque": DIM}
-COULEURS_FAMILLES = {"sol": WARN, "inondation": A2, "techno": A3}
+NIVEAUX = {
+    "4 risques": BAD,
+    "3 risques": "#fb923c",
+    "2 risques": WARN,
+    "1 risque": A2,
+    "aucun risque": DIM,
+}
+COULEURS_FAMILLES = {"sol": WARN, "inondation": A2, "techno": A3, "pollution": A1}
 COULEURS_PERILS = {
     "Sécheresse": WARN,
     "Inondation": A2,

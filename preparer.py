@@ -2,17 +2,24 @@
 
 Lit les Parquet du cas (data/colleges_risques.parquet, data/colleges.parquet,
 data/risques_catnat.parquet), garde les 58 collèges publics (le Département possède les
-publics) et écrit trois petits fichiers que l'appli lit seuls :
+publics), les complète avec Géorisques (voir georisques.py) et écrit les fichiers que
+l'appli lit seuls :
 - data/colleges_priorite.parquet : un collège par ligne, familles de risque, évolution
 - data/historique_publics.parquet : effectifs, IPS et brevet sur 10 rentrées
 - data/catnat_colleges.parquet : arrêtés CatNat des communes qui ont un collège public
+- data/georisques_colleges.parquet : le cache des appels à l'API Géorisques
+
+Option --rafraichir : rappelle l'API Géorisques même si le cache existe.
 """
+
+import sys
 
 import pandas as pd
 
 from risques import (
     DATA,
     FICHIER_CATNAT,
+    FICHIER_GEORISQUES,
     FICHIER_HISTORIQUE,
     FICHIER_PRIORITE,
     ajouter_familles,
@@ -31,13 +38,25 @@ COLONNES = [
 ]  # fmt: skip
 
 
-def preparer() -> pd.DataFrame:
+def donnees_georisques(publics: pd.DataFrame, rafraichir: bool = False) -> pd.DataFrame:
+    """Le cache data/georisques_colleges.parquet ; l'API n'est appelée que s'il manque."""
+    if rafraichir or not FICHIER_GEORISQUES.exists():
+        import georisques  # import local : les tests et l'appli n'ont pas besoin du réseau
+
+        print("Appel de l'API Géorisques pour chaque collège (environ une minute)...")
+        georisques.recuperer(publics).to_parquet(FICHIER_GEORISQUES, index=False)
+    return pd.read_parquet(FICHIER_GEORISQUES)
+
+
+def preparer(rafraichir: bool = False) -> pd.DataFrame:
     colleges = pd.read_parquet(DATA / "colleges_risques.parquet")
     historique = pd.read_parquet(DATA / "colleges.parquet")
 
     publics = colleges.loc[colleges["statut"] == "public", COLONNES]
-    df = ajouter_familles(publics).merge(
-        evolution_effectifs(historique), on="uai", how="left", validate="1:1"
+    df = (
+        publics.merge(donnees_georisques(publics, rafraichir), on="uai", how="left", validate="1:1")
+        .pipe(ajouter_familles)
+        .merge(evolution_effectifs(historique), on="uai", how="left", validate="1:1")
     )
     assert df["uai"].is_unique and len(df) == 58, len(df)
     return df.reset_index(drop=True)
@@ -56,10 +75,10 @@ def preparer_catnat(codes_insee: pd.Series) -> pd.DataFrame:
 
 
 if __name__ == "__main__":
-    df = preparer()
+    df = preparer(rafraichir="--rafraichir" in sys.argv)
     df.to_parquet(FICHIER_PRIORITE, index=False)
     preparer_historique(df["uai"]).to_parquet(FICHIER_HISTORIQUE, index=False)
     catnat = preparer_catnat(df["code_insee"])
     catnat.to_parquet(FICHIER_CATNAT, index=False)
     print(f"{len(df)} collèges publics, {len(catnat)} arrêtés CatNat")
-    print(df[["sol", "inondation", "techno"]].sum().to_dict())
+    print(df[["sol", "inondation", "techno", "pollution"]].sum().to_dict())

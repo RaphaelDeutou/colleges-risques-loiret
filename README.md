@@ -26,11 +26,13 @@ uv run ruff check . && uv run ruff format --check .
 | Fichier | Rôle |
 |---|---|
 | `preparer.py` | préparation hors de l'appli : 58 collèges publics, familles de risque, évolution des effectifs, historique et arrêtés CatNat des communes |
+| `georisques.py` | appel à l'API Géorisques (anciens sites industriels, remontée de nappe, argiles), mis en cache dans `data/georisques_colleges.parquet` |
 | `risques.py` | calculs, sans affichage : règles des familles, classement, indicateurs, fiche collège |
 | `theme.py` | design : couleurs, polices, cartes en verre, mise en forme des graphiques |
 | `.streamlit/config.toml` | thème sombre de Streamlit |
 | `app.py` | affichage Streamlit : filtres, indicateurs, classement ou carte cliquables, fiche collège |
-| `tests/test_risques.py` | règles des familles, classement, préparation |
+| `tests/test_risques.py` | règles des familles, seuils, classement, préparation |
+| `REPONSES.md` | réponses aux questions du cas, chiffres à l'appui |
 | `data/` | les Parquet du cas et le Parquet préparé |
 | `CADRAGE.md` | la fiche de cadrage |
 
@@ -44,13 +46,14 @@ Filtres : familles de risque, communes (la carte zoome sur les communes choisies
 
 ## Classement
 
-Trois familles de risque, chacune avec une règle simple :
+Quatre familles de risque, chacune avec une règle simple :
 
-- **sol** : aléa argiles fort au point du collège, ou cavité, ou mouvement de terrain à moins de 500 m
-- **inondation** : le collège est dans un périmètre de PPRI
+- **sol** : argiles fortes selon la carte choisie (GéoLoiret ou Géorisques), ou cavité, ou mouvement de terrain à moins de 500 m
+- **inondation** : le collège est dans un périmètre de PPRI, ou en remontée de nappe « risque existant »
 - **technologique** : zone de sûreté TMD de 500 m, ou site Seveso à moins de 2 km
+- **sols pollués** : au moins 5 anciens sites industriels (CASIAS) à moins de 500 m, le quart des collèges les plus entourés
 
-On classe d'abord par nombre de familles, puis par nombre d'élèves. Les rayons sont des choix du projet, pas des seuils officiels. Un aléa n'est pas un risque, et un périmètre de PPRI n'est pas la zone inondable.
+On classe d'abord par nombre de familles, puis par nombre d'élèves. Les rayons et seuils sont des choix du projet, pas des seuils officiels : la partie « Sensibilité » de l'appli permet de les changer. Un aléa n'est pas un risque, un périmètre de PPRI n'est pas la zone inondable, et un ancien site industriel n'est pas une pollution prouvée.
 
 ## Données
 
@@ -59,6 +62,7 @@ Fichiers du cas 2 du cours (`awp-gabarit/data/projets`), construits à partir de
 - GéoLoiret ([catalogue](https://geoloiret.loiret-numerique.fr/apps/referentiel/catalogue_donnees.htm)) : collèges, secteurs, argiles, cavités, mouvements de terrain, PPRI, repères de crues, ICPE, TMD, centrales nucléaires
 - ministère de l'Éducation nationale : effectifs et IPS
 - Géorisques : arrêtés CatNat (GASPAR)
+- API Géorisques, interrogée par `georisques.py` : anciens sites industriels (CASIAS), remontée de nappe et argiles à l'adresse de chaque collège. Pour mettre à jour le cache : `uv run python preparer.py --rafraichir`
 
 Licence Ouverte 2.0. Mentions : « Source : BRGM / DDT45 / Département du Loiret, année », « Géorisques, GASPAR », « ministère de l'Éducation nationale ».
 
